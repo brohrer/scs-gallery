@@ -1,10 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Compare with the CIFAR-10 Papers With Code pareto frontier here
-https://paperswithcode.com/sota/image-classification-on-cifar-10?dimension=PARAMS
-
-85.3% accuracy, 400 training epochs, 95,395 parameters
-"""
 import os
 import sys
 import time
