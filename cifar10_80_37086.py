@@ -23,7 +23,7 @@ n_classes = 10
 n_epochs = 100
 n_runs = 1000
 n_input_channels = 3
-n_units = 52 # 56 # 60
+n_units = 56
 p_init = .7
 
 # Allow for a version to be provided at the command line, as in
@@ -89,32 +89,6 @@ class Network(nn.Module):
             kernel_size=1)
         self.pool2 = MaxAbsPool2d(kernel_size=2, stride=2, ceil_mode=True)
 
-        '''
-        self.scs2 = SharpenedCosineSimilarity(
-            in_channels=n_units,
-            out_channels=n_units,
-            kernel_size=3,
-            p_init=p_init,
-            padding=0)
-        self.pool2 = MaxAbsPool2d(kernel_size=2, stride=2, ceil_mode=True)
-        '''
-
-        '''
-        self.scs3_depth = SharpenedCosineSimilarity(
-            in_channels=n_units,
-            out_channels=n_units,
-            kernel_size=3,
-            p_init=p_init,
-            groups=n_units,
-            padding=0)
-        self.scs3_point = SharpenedCosineSimilarity(
-            in_channels=n_units,
-            out_channels=n_units,
-            p_init=p_init,
-            kernel_size=1)
-        self.pool3 = MaxAbsPool2d(kernel_size=4, stride=4, ceil_mode=True)
-        '''
-
         self.scs3 = SharpenedCosineSimilarity(
             in_channels=n_units,
             out_channels=n_units,
@@ -132,12 +106,7 @@ class Network(nn.Module):
         t = self.scs2_depth(t)
         t = self.scs2_point(t)
         t = self.pool2(t)
-        # t = self.scs2(t)
-        # t = self.pool2(t)
 
-        # t = self.scs3_depth(t)
-        # t = self.scs3_point(t)
-        # t = self.pool3(t)
         t = self.scs3(t)
         t = self.pool3(t)
 
