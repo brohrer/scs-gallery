@@ -9,24 +9,23 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
 import torchvision
-from torchvision.datasets import CIFAR10
 import torchvision.transforms as transforms
 from tqdm import tqdm
 
 from absolute_pooling import MaxAbsPool2d
 from sharpened_cosine_similarity import SharpenedCosineSimilarity
 
-batch_size = 64
-label_smoothing = .05
-max_lr = .05
+batch_size = 100
+max_lr = .03
 n_classes = 10
-n_epochs = 300
-n_runs = 1000
-n_input_channels = 3
-n_units_1 = 80
-n_units_2 = 40
-n_units_3 = 40
-p_init = .7
+n_epochs = 200
+n_runs = 3
+n_input_channels = 1
+n_units_1 = 32
+n_units_2 = 20
+n_units_3 = 20
+n_units_4 = 20
+kernel_size = 3
 
 # Allow for a version to be provided at the command line, as in
 if len(sys.argv) > 1:
@@ -41,21 +40,18 @@ accuracy_history_path = os.path.join(
 loss_results_path = os.path.join("results", f"loss_{version}.npy")
 os.makedirs("results", exist_ok=True)
 
-training_set = CIFAR10(
-    root=os.path.join('.', 'data', 'CIFAR10'),
+# Use standard FashionMNIST dataset
+training_set = torchvision.datasets.FashionMNIST(
+    root='./data/FashionMNIST',
     train=True,
     download=True,
     transform=transforms.Compose([
+        transforms.RandomCrop(28, padding=2),
         transforms.RandomHorizontalFlip(),
-        transforms.RandomAffine(
-            8,  # degrees rotation
-            translate=(.1, .1),
-            scale=(.9,1.1),
-            shear=2),
-        transforms.ToTensor()
+        transforms.ToTensor(),
     ]))
-testing_set = CIFAR10(
-    root=os.path.join('.', 'data', 'CIFAR10'),
+testing_set = torchvision.datasets.FashionMNIST(
+    root='./data/FashionMNIST',
     train=False,
     download=True,
     transform=transforms.Compose([transforms.ToTensor()]))
@@ -73,37 +69,55 @@ testing_loader = DataLoader(
 class Network(nn.Module):
     def __init__(self):
         super().__init__()
+
         self.scs1 = SharpenedCosineSimilarity(
             in_channels=n_input_channels,
             out_channels=n_units_1,
-            kernel_size=5,
-            p_init=p_init,
+            kernel_size=kernel_size,
             padding=0)
         self.pool1 = MaxAbsPool2d(kernel_size=2, stride=2, ceil_mode=True)
 
         self.scs2_depth = SharpenedCosineSimilarity(
             in_channels=n_units_1,
             out_channels=n_units_1,
-            kernel_size=3,
-            p_init=p_init,
+            kernel_size=kernel_size,
             groups=n_units_1,
-            padding=0)
+            padding=1)
         self.scs2_point = SharpenedCosineSimilarity(
             in_channels=n_units_1,
             out_channels=n_units_2,
-            p_init=p_init,
-            kernel_size=1)
+            kernel_size=1,
+            )
         self.pool2 = MaxAbsPool2d(kernel_size=2, stride=2, ceil_mode=True)
 
-        self.scs3 = SharpenedCosineSimilarity(
+        self.scs3_depth = SharpenedCosineSimilarity(
             in_channels=n_units_2,
             out_channels=n_units_3,
-            kernel_size=3,
-            p_init=p_init,
-            padding=0)
-        self.pool3 = MaxAbsPool2d(kernel_size=4, stride=4, ceil_mode=True)
+            kernel_size=kernel_size,
+            groups=n_units_2,
+            padding=1)
+        self.scs3_point = SharpenedCosineSimilarity(
+            in_channels=n_units_3,
+            out_channels=n_units_3,
+            kernel_size=1,
+            )
+        self.pool3 = MaxAbsPool2d(kernel_size=2, stride=2, ceil_mode=True)
 
-        self.out = nn.Linear(in_features=n_units_3, out_features=n_classes)
+        self.scs4_depth = SharpenedCosineSimilarity(
+            in_channels=n_units_3,
+            out_channels=n_units_4,
+            kernel_size=kernel_size,
+            groups=n_units_3,
+            padding=1)
+        self.scs4_point = SharpenedCosineSimilarity(
+            in_channels=n_units_4,
+            out_channels=n_units_4,
+            kernel_size=1,
+            )
+        self.pool4 = MaxAbsPool2d(kernel_size=4, stride=4, ceil_mode=True)
+
+        self.out = nn.Linear(in_features=n_units_4, out_features=n_classes)
+
 
     def forward(self, t):
         t = self.scs1(t)
@@ -113,10 +127,15 @@ class Network(nn.Module):
         t = self.scs2_point(t)
         t = self.pool2(t)
 
-        t = self.scs3(t)
+        t = self.scs3_depth(t)
+        t = self.scs3_point(t)
         t = self.pool3(t)
 
-        t = t.reshape(-1, n_units_3)
+        t = self.scs4_depth(t)
+        t = self.scs4_point(t)
+        t = self.pool4(t)
+
+        t = t.reshape(-1, n_units_4)
         t = self.out(t)
 
         return t
@@ -166,8 +185,7 @@ for i_run in range(n_runs):
 
                 images, labels = batch
                 preds = network(images)
-                loss = F.cross_entropy(
-                    preds, labels, label_smoothing=label_smoothing)
+                loss = F.cross_entropy(preds, labels)
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -175,7 +193,8 @@ for i_run in range(n_runs):
                 scheduler.step()
 
                 epoch_training_loss += loss.item() * training_loader.batch_size
-                epoch_training_num_correct += (preds.argmax(dim=1).eq(labels).sum().item())
+                epoch_training_num_correct += (
+                    preds.argmax(dim=1).eq(labels).sum().item())
 
                 tqdm_training_loader.set_description(
                     f'Step: {batch_idx + 1}/{steps_per_epoch}, '
@@ -185,7 +204,8 @@ for i_run in range(n_runs):
 
         epoch_duration = time.time() - epoch_start_time
         training_loss = epoch_training_loss / len(training_loader.dataset)
-        training_accuracy = (epoch_training_num_correct / len(training_loader.dataset))
+        training_accuracy = (
+            epoch_training_num_correct / len(training_loader.dataset))
 
         # At the end of each epoch run the testing data through an
         # evaluation pass to see how the model is doing.
@@ -197,10 +217,12 @@ for i_run in range(n_runs):
                 loss = F.cross_entropy(preds, labels)
 
                 epoch_testing_loss += loss.item() * testing_loader.batch_size
-                epoch_testing_num_correct += (preds.argmax(dim=1).eq(labels).sum().item())
+                epoch_testing_num_correct += (
+                    preds.argmax(dim=1).eq(labels).sum().item())
 
             testing_loss = epoch_testing_loss / len(testing_loader.dataset)
-            testing_accuracy = (epoch_testing_num_correct / len(testing_loader.dataset))
+            testing_accuracy = (
+                epoch_testing_num_correct / len(testing_loader.dataset))
             epoch_accuracy_history.append(testing_accuracy)
 
         print(
